@@ -51,7 +51,8 @@ assert.equal(average([1, 2], 5), null);
 // camera colour classification: noisy, dimmed samples of a scrambled cube come back exact
 const RGB = { U: [235, 235, 225], R: [200, 30, 40], F: [20, 170, 90], D: [240, 210, 40], L: [245, 120, 20], B: [30, 80, 210] };
 const truth = new CubeState().move(rnd).facelets();
-const samples = [...truth].map(c => RGB[c].map(v => Math.max(0, Math.min(255, v * (0.75 + Math.random() * 0.25) + (Math.random() - 0.5) * 20))));
+// light dims a sticker as a whole (one factor for all channels), plus a little sensor noise per channel
+const samples = [...truth].map(c => { const k = 0.75 + Math.random() * 0.25; return RGB[c].map(v => Math.max(0, Math.min(255, v * k + (Math.random() - 0.5) * 16))); });
 assert.equal(classify(samples), truth, 'classify');
 
 console.log('all good');

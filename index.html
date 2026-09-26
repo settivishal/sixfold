@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Sixfold — a 3×3 cube studio</title>
+  <meta name="description" content="Solve, time, scan and play with a 3×3 cube in your browser — keyboard, mouse, camera or bare hands." />
+  <meta name="theme-color" content="#06060c" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ffb36b'/%3E%3Cstop offset='.5' stop-color='%23ff5c8a'/%3E%3Cstop offset='1' stop-color='%239b7bff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='%2306060c'/%3E%3Cg fill='url(%23g)'%3E%3Crect x='6' y='6' width='6' height='6' rx='1.5'/%3E%3Crect x='13' y='6' width='6' height='6' rx='1.5'/%3E%3Crect x='20' y='6' width='6' height='6' rx='1.5'/%3E%3Crect x='6' y='13' width='6' height='6' rx='1.5'/%3E%3Crect x='13' y='13' width='6' height='6' rx='1.5'/%3E%3Crect x='20' y='13' width='6' height='6' rx='1.5'/%3E%3Crect x='6' y='20' width='6' height='6' rx='1.5'/%3E%3Crect x='13' y='20' width='6' height='6' rx='1.5'/%3E%3Crect x='20' y='20' width='6' height='6' rx='1.5'/%3E%3C/g%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@300..500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+</head>
+<body data-mode="play">
+  <div class="sky" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="bar">
+    <a class="brand" href="./" aria-label="Sixfold home">
+      <span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      <span>six<em>fold</em></span>
+    </a>
+    <nav class="modes" role="tablist" aria-label="Modes">
+      <button role="tab" data-mode="play">Play</button>
+      <button role="tab" data-mode="learn">Learn</button>
+      <button role="tab" data-mode="solve">Solve</button>
+      <button role="tab" data-mode="time">Timer</button>
+      <button role="tab" data-mode="train">Train</button>
+      <button role="tab" data-mode="patterns">Patterns</button>
+      <button role="tab" data-mode="scan">Scan</button>
+      <button role="tab" data-mode="connect">Connect</button>
+    </nav>
+    <div class="seg puzzle" id="puzzle" role="radiogroup" aria-label="Puzzle">
+      <button data-n="2">2×2</button>
+      <button data-n="3">3×3</button>
+      <button data-n="4">4×4</button>
+    </div>
+    <div class="tools">
+      <button class="icon" id="record-btn" aria-label="Record a video" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle class="rec-dot" cx="12" cy="12" r="4"/></svg>
+      </button>
+      <button class="icon" id="share-btn" aria-label="Share this cube">
+        <svg viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>
+      </button>
+      <button class="icon" id="theme-btn" popovertarget="theme-pop" aria-label="Cube theme">
+        <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.8 1.6-1.6 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5C21 6.4 17 3 12 3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="14.5" cy="7" r="1"/><circle cx="17" cy="11" r="1"/></svg>
+      </button>
+      <button class="icon" id="sound-btn" aria-label="Toggle sound" aria-pressed="true">
+        <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path class="wave" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>
+      </button>
+      <button class="icon" id="keys-btn" aria-label="Keyboard controls">
+        <svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M7.5 14h9"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="stage-wrap">
+    <div id="stage" aria-label="3D cube. Drag a face to turn it, drag the background to look around."></div>
+    <div class="timer-display" id="timer-display" role="timer" aria-live="off">0.00</div>
+    <div class="hud" id="hud" aria-live="polite"></div>
+    <div class="ghost-race" id="ghost" hidden>
+      <div class="ghost-stage" id="ghost-stage"></div>
+      <div class="ghost-meta"><span id="ghost-label">Ghost</span><b id="ghost-time">ready</b></div>
+    </div>
+    <div class="rec-badge" id="rec-badge" hidden><i></i><span id="rec-time">0:00</span></div>
+    <div class="playback" id="playback" hidden>
+      <span class="pb-stage" id="pb-stage"></span>
+      <button class="icon" id="pb-start" aria-label="Back to start"><svg viewBox="0 0 24 24"><path d="M6 5v14M18 5 9 12l9 7z"/></svg></button>
+      <button class="icon" id="pb-back" aria-label="Step back"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <button class="icon big" id="pb-play" aria-label="Play"><svg viewBox="0 0 24 24"><path class="play" d="M8 5v14l11-7z"/><path class="pause" d="M8 5v14M16 5v14"/></svg></button>
+      <button class="icon" id="pb-next" aria-label="Step forward"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+      <span class="pb-count" id="pb-count">0 / 0</span>
+      <button class="icon" id="pb-close" aria-label="Close solution"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+    <p class="hint">Drag a face to turn · drag space to orbit · <kbd>?</kbd> for keys</p>
+  </main>
+
+  <aside class="panel" aria-live="polite">
+    <!-- PLAY -->
+    <section data-panel="play">
+      <p class="eyebrow">Free play</p>
+      <h2>Turn it. <em>Feel it.</em></h2>
+      <p class="lede">Drag any face, type moves on your keyboard, or tap the pad below.</p>
+      <div class="row">
+        <button class="btn primary" id="scramble-btn">Scramble</button>
+        <button class="btn" id="reset-btn">Reset</button>
+      </div>
+      <div class="row">
+        <button class="btn ghost" id="undo-btn" aria-keyshortcuts="Control+Z">Undo</button>
+        <button class="btn ghost" id="redo-btn" aria-keyshortcuts="Control+Shift+Z">Redo</button>
+        <button class="btn ghost" id="hint-btn" aria-keyshortcuts="H">Hint</button>
+      </div>
+      <div class="movepad" id="movepad"></div>
+      <label class="slider">
+        <span>Turn speed</span>
+        <input type="range" id="speed" min="0.4" max="3" step="0.1" value="1" />
+      </label>
+      <dl class="meta">
+        <div><dt>Moves</dt><dd id="move-count">0</dd></div>
+        <div><dt>State</dt><dd id="solved-state">Solved</dd></div>
+      </dl>
+    </section>
+
+    <!-- LEARN -->
+    <section data-panel="learn" hidden>
+      <p class="eyebrow">Learn to solve</p>
+      <h2>Solve it <em>yourself.</em></h2>
+      <p class="lede">The beginner’s method, one layer at a time. Every step is worked out for the cube in front of you — the pieces that matter glow, the rest fade back. Follow along with a real cube.</p>
+      <div class="row">
+        <button class="btn primary" id="learn-go">Teach this cube</button>
+        <button class="btn" id="learn-scramble">Scramble &amp; teach</button>
+      </div>
+      <ol class="stages" id="stages"></ol>
+    </section>
+
+    <!-- SOLVE -->
+    <section data-panel="solve" hidden>
+      <p class="eyebrow">Solver</p>
+      <h2>Any cube, <em>twenty moves</em> or so.</h2>
+      <p class="lede">Kociemba’s two-phase algorithm finds a near-optimal solution in milliseconds. Step through it at your own pace.</p>
+      <button class="btn primary wide" id="solve-btn">Solve this cube</button>
+      <p class="msg" id="solve-note"></p>
+      <div class="divider"></div>
+      <p class="eyebrow">Your real cube</p>
+      <h3>Paint it <em>in.</em></h3>
+      <p class="lede small">Hold your cube white on top, green facing you. Pick a colour and tap (or drag across) stickers — or let the <button class="link" data-goto="scan">camera scan</button> do it.</p>
+      <div class="palette" id="palette" role="radiogroup" aria-label="Paint colour"></div>
+      <div class="net" id="net"></div>
+      <div class="row">
+        <button class="btn ghost" id="net-clear">Blank</button>
+        <button class="btn ghost" id="net-reset">Solved</button>
+      </div>
+      <p class="msg" id="net-msg"></p>
+    </section>
+
+    <!-- TIMER -->
+    <section data-panel="time" hidden>
+      <p class="eyebrow">Speedcubing timer</p>
+      <h2>Beat <em>your best.</em></h2>
+      <div class="seg" id="timer-kind" role="radiogroup" aria-label="Timer mode">
+        <button data-kind="physical">Real cube</button>
+        <button data-kind="virtual">On screen</button>
+      </div>
+      <div class="scramble-head">
+        <span>Scramble</span>
+        <span class="chips">
+          <button class="chip-btn" id="ghost-btn" aria-pressed="false" hidden>👻 Ghost</button>
+          <button class="chip-btn" id="daily-btn" aria-pressed="false">✦ Daily</button>
+        </span>
+      </div>
+      <div class="scramble">
+        <code id="scramble-text">…</code>
+        <button class="icon" id="new-scramble" aria-label="New scramble"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg></button>
+      </div>
+      <label class="toggle"><input type="checkbox" id="inspection" /><span></span>15-second WCA inspection</label>
+      <p class="lede small" id="timer-help"></p>
+      <div class="result" id="result" hidden></div>
+      <dl class="stats" id="stats"></dl>
+      <svg class="spark" id="spark" viewBox="0 0 300 70" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <ol class="times" id="times" reversed></ol>
+      <div class="row">
+        <button class="btn" id="stats-open">Stats &amp; charts</button>
+        <button class="btn ghost" id="clear-times">Clear</button>
+      </div>
+    </section>
+
+    <!-- TRAIN -->
+    <section data-panel="train" hidden>
+      <p class="eyebrow">Algorithm trainer</p>
+      <h2>Drill the <em>last layer.</em></h2>
+      <div class="seg" id="train-set" role="radiogroup" aria-label="Algorithm set">
+        <button data-set="oll">2-look OLL</button>
+        <button data-set="pll">PLL</button>
+      </div>
+      <p class="lede small" id="train-blurb"></p>
+      <div class="row">
+        <button class="btn primary" id="train-drill">Timed drill</button>
+        <button class="btn" id="train-quiz">Recognition quiz</button>
+      </div>
+      <div class="drill" id="drill" hidden>
+        <div class="drill-top">
+          <span class="drill-name" id="drill-name"></span>
+          <span class="drill-time" id="drill-time"></span>
+        </div>
+        <div class="drill-diagram" id="drill-diagram"></div>
+        <code class="drill-alg" id="drill-alg"></code>
+        <div class="quiz" id="quiz"></div>
+        <div class="row">
+          <button class="btn ghost" id="drill-reveal">Reveal</button>
+          <button class="btn ghost" id="drill-show">Show me</button>
+          <button class="btn ghost" id="drill-next">Next <kbd>↵</kbd></button>
+        </div>
+        <button class="btn ghost wide" id="drill-stop">Stop</button>
+      </div>
+      <p class="lede small cases-hint">Tap a case to include or skip it. Your best time shows underneath.</p>
+      <div class="cases" id="cases"></div>
+    </section>
+
+    <!-- SCAN -->
+    <section data-panel="scan" hidden>
+      <p class="eyebrow">Camera scan</p>
+      <h2>Show us <em>your cube.</em></h2>
+      <p class="lede">Fit each face inside the grid. Colours are matched against the six centres, so warm or cool light both work.</p>
+      <div class="cam">
+        <video id="scan-video" playsinline muted></video>
+        <canvas id="scan-overlay"></canvas>
+        <div class="cam-empty" id="scan-empty">Camera is off</div>
+      </div>
+      <p class="step" id="scan-step"></p>
+      <div class="row">
+        <button class="btn primary" id="scan-start">Start camera</button>
+        <button class="btn" id="scan-capture" disabled>Capture <kbd>Space</kbd></button>
+      </div>
+      <div class="scan-faces" id="scan-faces"></div>
+    </section>
+
+    <!-- CONNECT -->
+    <section data-panel="connect" hidden>
+      <p class="eyebrow">Connect</p>
+      <h2>More ways <em>to turn.</em></h2>
+      <p class="lede">Your hands, your voice, or a real Bluetooth cube. All three keep working in every mode, including the timer.</p>
+
+      <div class="card">
+        <h3>Hand <em>tracking</em></h3>
+        <p class="lede small">Pinch thumb and index finger over a face and drag, just like a mouse. Pinch empty space to orbit.</p>
+        <div class="cam">
+          <video id="hand-video" playsinline muted></video>
+          <canvas id="hand-overlay"></canvas>
+          <div class="cam-empty" id="hand-empty">Tracking is off</div>
+        </div>
+        <button class="btn primary wide" id="hand-start">Enable hand tracking</button>
+        <p class="msg" id="hand-msg"></p>
+      </div>
+
+      <div class="card">
+        <h3>Voice <em>control</em></h3>
+        <p class="lede small">Say moves — “right, up, right prime, up prime”, “front two” — or commands: <i>scramble, solve, undo, redo, reset, play, pause</i>.</p>
+        <button class="btn wide" id="voice-start">Start listening</button>
+        <p class="transcript" id="voice-heard" aria-live="polite"></p>
+      </div>
+
+      <div class="card">
+        <h3>Smart <em>cube</em></h3>
+        <p class="lede small">Pair a GAN Bluetooth cube (Gen 2–4, 12 ui, 356i…). Every physical turn shows up here instantly and drives the timer, trainer and solver.</p>
+        <input class="field" id="gan-mac" placeholder="MAC address — only if the browser asks" autocomplete="off" spellcheck="false" />
+        <div class="row">
+          <button class="btn" id="gan-connect">Connect cube</button>
+          <button class="btn ghost" id="gan-reset" hidden>Mark solved</button>
+        </div>
+        <p class="msg" id="gan-msg"></p>
+      </div>
+    </section>
+
+    <!-- PATTERNS -->
+    <section data-panel="patterns" hidden>
+      <p class="eyebrow">Pattern gallery</p>
+      <h2>The cube <em>as canvas.</em></h2>
+      <p class="lede">Classic patterns. Tap one to watch it bloom from a solved cube, then try solving it back.</p>
+      <div class="card designer" id="designer">
+        <h3>Design <em>your own.</em></h3>
+        <p class="lede small" id="design-help">Paint any design straight onto the 3D cube, and Sixfold finds the moves that make it.</p>
+        <div class="palette" id="design-palette" role="radiogroup" aria-label="Paint colour" hidden></div>
+        <code class="design-alg" id="design-alg" hidden></code>
+        <p class="msg" id="design-msg"></p>
+        <div class="row" id="design-actions">
+          <button class="btn primary" id="design-start">Start designing</button>
+        </div>
+      </div>
+      <div class="patterns" id="patterns"></div>
+    </section>
+  </aside>
+
+  <div id="theme-pop" popover class="theme-pop">
+    <p class="eyebrow">Stickers</p>
+    <div class="palettes" id="palettes"></div>
+    <p class="eyebrow">Body</p>
+    <div class="bodies" id="bodies"></div>
+  </div>
+
+  <dialog id="stats-dialog" class="stats-dialog" aria-labelledby="stats-title">
+    <header>
+      <h3 id="stats-title">Your <em>stats</em></h3>
+      <div class="seg" id="stats-puzzle" role="radiogroup" aria-label="Puzzle">
+        <button data-p="222">2×2</button><button data-p="333">3×3</button><button data-p="444">4×4</button>
+      </div>
+      <button class="icon" id="stats-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </header>
+    <dl class="kpis" id="kpis"></dl>
+    <p class="lede small" id="stats-empty">Finish a couple of timed solves on this puzzle and your charts appear here.</p>
+    <div id="stats-charts">
+      <section class="chart-card wide">
+        <div class="chart-head"><h4>Every solve</h4>
+          <ul class="legend"><li><i class="dot" style="background:#8670e8"></i>Solve</li><li><i style="background:#e04d7f"></i>Ao5</li><li><i style="background:#179fc8"></i>Ao12</li></ul>
+        </div>
+        <svg id="chart-line" viewBox="0 0 760 250" role="img" aria-label="Solve times with rolling averages"></svg>
+      </section>
+      <div class="chart-row">
+        <section class="chart-card"><div class="chart-head"><h4>Distribution</h4></div><svg id="chart-hist" viewBox="0 0 370 200" role="img" aria-label="Histogram of solve times"></svg></section>
+        <section class="chart-card"><div class="chart-head"><h4>Practice</h4><span class="legend-note">last 26 weeks</span></div><svg id="chart-cal" role="img" aria-label="Solves per day"></svg></section>
+      </div>
+      <details class="chart-card"><summary>View as table</summary><div class="table-wrap" id="stats-table"></div></details>
+    </div>
+    <footer class="stats-io">
+      <label class="btn ghost">Import csTimer<input type="file" id="import-cstimer" accept=".txt,.json,application/json" hidden /></label>
+      <button class="btn ghost" id="export-cstimer">Export csTimer</button>
+      <button class="btn ghost" id="export-csv">Export CSV</button>
+    </footer>
+    <div class="chart-tip" id="chart-tip" role="tooltip" hidden></div>
+  </dialog>
+
+  <dialog id="keys-dialog" aria-labelledby="keys-title">
+    <header>
+      <h3 id="keys-title">Keyboard</h3>
+      <div class="seg" id="scheme" role="radiogroup" aria-label="Key scheme">
+        <button data-scheme="notation">Notation</button>
+        <button data-scheme="speed">Speedcuber</button>
+      </div>
+      <button class="icon" id="keys-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </header>
+    <p class="lede small" id="scheme-help"></p>
+    <div class="keyboard" id="keyboard"></div>
+    <p class="lede small foot"><kbd>⌘/Ctrl</kbd> <kbd>Z</kbd> undo · <kbd>⇧</kbd> redo · <kbd>Space</kbd> timer / capture · <kbd>Esc</kbd> stop playback</p>
+  </dialog>
+
+  <div class="hand-cursor" id="hand-cursor" aria-hidden="true"></div>
+  <div class="toast" id="toast" role="status"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

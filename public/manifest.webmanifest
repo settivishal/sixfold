@@ -1,0 +1,11 @@
+{
+  "name": "Sixfold — a 3×3 cube studio",
+  "short_name": "Sixfold",
+  "description": "Solve, learn, time and train the 3×3 cube — keyboard, touch, camera, voice or a smart cube.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#06060c",
+  "theme_color": "#06060c",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

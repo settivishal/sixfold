@@ -227,16 +227,23 @@ function render() {
 
 // ---------- puzzle size ----------
 const THREE_ONLY = ['learn', 'train', 'scan', 'patterns'];
-function setPuzzle(n) {
+let chosen = store.get('puzzle', 3); // the puzzle you picked; 3×3-only modes borrow a 3×3 without changing it
+const parked = {}; // cube left behind per size while another size is on screen
+function swapTo(n) {
   if (n === state.size) return;
-  setCube(solvedFacelets(n));
-  if (THREE_ONLY.includes(mode) && n !== 3) setMode('play');
+  parked[state.size] = state.facelets();
+  setCube(parked[n] ?? solvedFacelets(n));
+}
+function setPuzzle(n) {
+  chosen = n;
+  store.set('puzzle', n);
+  if (THREE_ONLY.includes(mode) && n !== 3) return setMode('play');
+  if (n !== state.size) setCube(solvedFacelets(n));
 }
 function onResize() {
   const n = state.size;
   document.body.dataset.puzzle = n;
   document.querySelectorAll('#puzzle button').forEach(b => b.setAttribute('aria-checked', +b.dataset.n === n));
-  store.set('puzzle', n);
   buildPad();
   buildNet();
   $('solve-note').textContent = n === 4 ? 'The solver covers 2×2 and 3×3 — for the 4×4, scramble, time and play.' : '';
@@ -255,7 +262,10 @@ function setMode(m) {
     if (mode === 'train' && m !== 'train') train?.deactivate();
     loadPanel(m);
     if (mode === 'patterns' && m !== 'patterns') stopDesign();
-    if (THREE_ONLY.includes(m) && state.size !== 3) { setPuzzle(3); toast('Switched to the 3×3 — this mode is 3×3 only'); }
+    if (THREE_ONLY.includes(m) && state.size !== 3) {
+      toast(`${m[0].toUpperCase() + m.slice(1)} uses the 3×3 — your ${state.size}×${state.size} will be waiting when you leave`);
+      swapTo(3);
+    } else if (!THREE_ONLY.includes(m) && chosen !== state.size) swapTo(chosen);
     mode = m;
     document.body.dataset.mode = m;
     tabs.forEach(t => t.setAttribute('aria-selected', t.dataset.mode === m));
@@ -510,7 +520,6 @@ function designUI(stage) {
   }[stage];
 }
 function startDesign() {
-  if (state.size !== 3) setPuzzle(3);
   setCube(SOLVED);
   designing = true;
   cube.paintMode = true;
@@ -624,7 +633,7 @@ const timer = initTimer({
     statsView ??= (await import('./statsview.js')).initStatsView({ getSolves: () => timer.all(), setSolves: l => timer.replaceAll(l), getSize: () => state.size, toast });
     statsView.open();
   },
-  loadScramble: seq => setCube(new CubeState().move(seq).facelets()),
+  loadScramble: seq => setCube(new CubeState(solvedFacelets(state.size)).move(seq).facelets()), // scramble the puzzle on screen, whatever its size
   isSolved: () => state.isSolved(),
   getFacelets: () => state.facelets(),
   splits: (start, moves) => (sizeOf(start) === 3 ? cfopSplits(start, moves) : [-1, -1, -1, -1]),
@@ -759,8 +768,8 @@ if (shared && /^[URFDLB?]+$/.test(shared) && [24, 54, 96].includes(shared.length
   setCube(shared);
   toast(problem(shared) ? 'Shared cube loaded' : 'Someone shared this cube with you — can you solve it?');
 }
-const savedPuzzle = store.get('puzzle', 3);
-if (!shared && [2, 4].includes(savedPuzzle)) setCube(solvedFacelets(savedPuzzle));
+if (shared) { chosen = state.size; onResize(); } // a shared link decides the puzzle
+else if ([2, 4].includes(chosen)) setCube(solvedFacelets(chosen));
 else onResize();
 const initial = location.hash.slice(1);
 mode = null;

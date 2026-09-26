@@ -746,6 +746,8 @@ dialog header .seg { margin: 0 0 0 auto; }
 @keyframes vt-in { from { opacity: 0; transform: translateY(12px) scale(0.985); filter: blur(6px); } }
 
 /* puzzle switcher + recording */
+/* in 3×3-only modes the other sizes stay clickable (they take you back to Play) but step back visually */
+body:is([data-mode='learn'], [data-mode='train'], [data-mode='scan'], [data-mode='patterns']) #puzzle button:not([data-n='3']) { opacity: 0.4; }
 .bar .puzzle { margin: 0; }
 .bar .puzzle button { padding: 6px 11px; font: 500 12px var(--mono); }
 #record-btn .rec-dot { fill: currentColor; stroke: none; transition: fill 0.2s; }

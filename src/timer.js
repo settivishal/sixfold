@@ -28,11 +28,14 @@ export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, n
   async function newScramble() {
     scrambleEl.textContent = 'Shuffling…';
     const size = getSize();
+    let fresh;
     try {
-      scramble = await ask('scramble', { size, seed: daily ? (DAILY_NO * 2654435761) >>> 0 : undefined });
+      fresh = await ask('scramble', { size, seed: daily ? (DAILY_NO * 2654435761) >>> 0 : undefined });
     } catch {
-      scramble = randomMoves(); // solver failed to load — fall back to random moves
+      fresh = randomMoves(); // solver failed to load — fall back to random moves
     }
+    if (size !== getSize()) return; // the puzzle changed while this was generating; a fresher request is on its way
+    scramble = fresh;
     scrambleSize = size;
     scrambleEl.textContent = scramble;
     if (active && phase === 'idle' && kind === 'physical') loadScramble(scramble);

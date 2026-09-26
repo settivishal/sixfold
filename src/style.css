@@ -855,6 +855,20 @@ details.chart-card summary { cursor: pointer; font: 400 18px var(--serif); }
 .chart-tip p em { margin-left: auto; font: normal 400 12px var(--mono); color: var(--text); }
 
 @media (max-width: 1480px) { .brand { min-width: 0; } }
+/* mid-width screens: tighten the bar so logo, tabs, puzzle switcher and tools always fit on one line */
+.brand, .bar .puzzle, .tools { flex: none; }
+.modes { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+@media (max-width: 1320px) and (min-width: 901px) {
+  .bar { gap: 12px; padding: 0 18px; }
+  .modes button { padding: 8px 11px; }
+  .bar .puzzle button { padding: 6px 8px; }
+  .tools { gap: 0; }
+  .tools .icon { width: 34px; }
+}
+@media (max-width: 1120px) and (min-width: 901px) {
+  .brand > span:last-child { display: none; } /* keep the mark, drop the wordmark */
+  .modes button { padding: 8px 9px; font-size: 12.5px; }
+}
 @media (pointer: coarse) { #keys-btn, .hint { display: none; } }
 
 /* first-visit tour */
@@ -903,7 +917,7 @@ details.chart-card summary { cursor: pointer; font: 400 18px var(--serif); }
 .tour-link { display: inline-block; margin-top: 18px; font-size: 13px; color: var(--muted); }
 
 /* trophies */
-.icon.trophy { position: relative; }
+#trophy-btn { position: relative; }
 .streak-badge { position: absolute; top: -4px; right: -8px; font: 600 10px/1 var(--mono); padding: 2px 4px; border-radius: 8px; background: rgba(255, 140, 60, 0.18); color: #ffc58a; pointer-events: none; }
 .streak-badge:empty { display: none; }
 .trophy-pop {
@@ -938,13 +952,13 @@ details.chart-card summary { cursor: pointer; font: 400 18px var(--serif); }
 .trophies-dialog header h3 { margin: 0; font-size: 34px; }
 .trophy-count { margin-left: auto; font: 400 12px var(--mono); color: var(--muted); }
 .trophy-grid { list-style: none; margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
-.trophy { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 16px 12px; border-radius: 18px; text-align: center; background: rgba(255, 255, 255, 0.025); border: 1px solid var(--line); }
-.trophy .medal { width: 44px; height: 44px; margin-bottom: 6px; font-size: 20px; filter: grayscale(1) brightness(0.5); opacity: 0.6; }
-.trophy.got { border-color: rgba(255, 210, 120, 0.3); background: linear-gradient(170deg, rgba(255, 200, 110, 0.07), rgba(255, 255, 255, 0.02)); }
-.trophy.got .medal { filter: none; opacity: 1; }
-.trophy b { font: 400 18px/1.15 var(--serif); }
-.trophy em { font: normal 12px/1.35 var(--sans); color: var(--muted); }
-.trophy small { margin-top: 4px; font: 400 10px var(--mono); color: #ffd28a; }
+.trophy-grid .trophy { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 16px 12px; border-radius: 18px; text-align: center; background: rgba(255, 255, 255, 0.025); border: 1px solid var(--line); }
+.trophy-grid .trophy .medal { width: 44px; height: 44px; margin-bottom: 6px; font-size: 20px; filter: grayscale(1) brightness(0.5); opacity: 0.6; }
+.trophy-grid .trophy.got { border-color: rgba(255, 210, 120, 0.3); background: linear-gradient(170deg, rgba(255, 200, 110, 0.07), rgba(255, 255, 255, 0.02)); }
+.trophy-grid .trophy.got .medal { filter: none; opacity: 1; }
+.trophy-grid .trophy b { font: 400 18px/1.15 var(--serif); }
+.trophy-grid .trophy em { font: normal 12px/1.35 var(--sans); color: var(--muted); }
+.trophy-grid .trophy small { margin-top: 4px; font: 400 10px var(--mono); color: #ffd28a; }
 
 /* command palette */
 .palette-dialog { width: min(620px, 94vw); padding: 10px; margin-top: 12vh; }

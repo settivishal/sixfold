@@ -1,5 +1,6 @@
-// Offline support: stale-while-revalidate for the app shell, its assets and the fonts.
-const CACHE = 'sixfold-v2';
+// Offline support. Pages: network first (a new deploy shows up on the next load), cache as fallback.
+// Hashed assets and fonts: cache first — their URLs change whenever their content does.
+const CACHE = 'sixfold-v3';
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(['./', './manifest.webmanifest', './icon.svg'])));
@@ -16,11 +17,19 @@ self.addEventListener('fetch', e => {
   const url = new URL(request.url);
   if (url.origin !== location.origin && !/^fonts\.(googleapis|gstatic)\.com$/.test(url.hostname)) return;
   e.respondWith(caches.open(CACHE).then(async cache => {
-    const hit = await cache.match(request, { ignoreSearch: request.mode === 'navigate' });
-    const fresh = fetch(request).then(res => {
-      if (res.ok) cache.put(request, res.clone());
-      return res;
-    }).catch(() => hit);
-    return hit || fresh;
+    if (request.mode === 'navigate') {
+      try {
+        const res = await fetch(request);
+        if (res.ok) cache.put('./', res.clone());
+        return res;
+      } catch {
+        return (await cache.match('./')) ?? Response.error();
+      }
+    }
+    const hit = await cache.match(request);
+    if (hit) return hit;
+    const res = await fetch(request);
+    if (res.ok) cache.put(request, res.clone());
+    return res;
   }));
 });

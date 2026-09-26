@@ -1,5 +1,7 @@
 # Sixfold
 
+**Live:** https://settivishal.github.io/sixfold/
+
 A 3×3 cube studio for the browser (it also does 2×2 and 4×4). You can solve, learn, time, train and play, using the keyboard, mouse or touch, a camera, your hands, your voice, or a Bluetooth smart cube.
 
 ```bash

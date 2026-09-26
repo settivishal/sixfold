@@ -2,13 +2,7 @@ import { Cube3D } from './cube3d.js';
 import { CubeState, SOLVED, FACES, COLOR_NAMES, tokens, invert, invertMove, problem, solvedFacelets, sizeOf, faceletIndex } from './state.js';
 import { STAGES, stageFocus, cfopSplits } from './learn.js';
 import { initTimer } from './timer.js';
-import { initTrain } from './train.js';
-import { initScan } from './scan.js';
-import { initGesture } from './gesture.js';
-import { initConnect } from './connect.js';
 import { initTheme } from './theme.js';
-import { initStatsView } from './statsview.js';
-import { createRecorder, saveVideo } from './record.js';
 import { fmt } from './stats.js';
 
 const $ = id => document.getElementById(id);
@@ -28,17 +22,22 @@ function toast(text) {
 }
 
 // ---------- worker: Kociemba solver, beginner teacher, scrambles ----------
-const worker = new Worker(new URL('./solver.worker.js', import.meta.url), { type: 'module' });
+// Started on first use or once the page is idle, so its ~1 s of table building never competes with the first paint.
 const pending = new Map();
-let reqId = 0;
-worker.onmessage = ({ data }) => {
-  const p = pending.get(data.id);
-  pending.delete(data.id);
-  data.error ? p.reject(new Error(data.error)) : p.resolve(data.result);
-};
+let reqId = 0, worker = null;
+function getWorker() {
+  if (worker) return worker;
+  worker = new Worker(new URL('./solver.worker.js', import.meta.url), { type: 'module' });
+  worker.onmessage = ({ data }) => {
+    const p = pending.get(data.id);
+    pending.delete(data.id);
+    data.error ? p.reject(new Error(data.error)) : p.resolve(data.result);
+  };
+  return worker;
+}
 const ask = (type, data = {}) => new Promise((resolve, reject) => {
   pending.set(++reqId, { resolve, reject });
-  worker.postMessage({ id: reqId, type, ...data });
+  getWorker().postMessage({ id: reqId, type, ...data });
 });
 
 // ---------- sound ----------
@@ -94,7 +93,7 @@ function move(tok, { record = true, fromSolution = false, animated = false } = {
   if (!fromSolution && solution) closeSolution();
   if (!fromSolution) hintTok = null;
   timer.onMove(tok);
-  train.onMove(tok);
+  train?.onMove(tok);
   const solved = state.isSolved();
   if (solved && !wasSolved) celebratePending = true;
   wasSolved = solved;
@@ -252,8 +251,9 @@ document.querySelectorAll('#puzzle button').forEach(b => b.addEventListener('cli
 const tabs = [...document.querySelectorAll('.modes button')];
 function setMode(m) {
   const go = () => {
-    if (mode === 'scan' && m !== 'scan') scan.stop();
-    if (mode === 'train' && m !== 'train') train.deactivate();
+    if (mode === 'scan' && m !== 'scan') scan?.stop();
+    if (mode === 'train' && m !== 'train') train?.deactivate();
+    loadPanel(m);
     if (mode === 'patterns' && m !== 'patterns') stopDesign();
     if (THREE_ONLY.includes(m) && state.size !== 3) { setPuzzle(3); toast('Switched to the 3×3 — this mode is 3×3 only'); }
     mode = m;
@@ -580,9 +580,13 @@ function replay(recon, onDone) {
 }
 
 // ---------- video recording ----------
-const recorder = createRecorder(cube);
-let recTicker = 0;
-function startRecording(opts) {
+let recorder = null, saveVideo = null, recTicker = 0;
+async function startRecording(opts) {
+  if (!recorder) {
+    const m = await import('./record.js');
+    recorder = m.createRecorder(cube);
+    saveVideo = m.saveVideo;
+  }
   if (!recorder.supported) return toast('Video recording isn’t supported in this browser.');
   recorder.start(opts);
   const t0 = performance.now();
@@ -602,10 +606,10 @@ async function stopRecording(name = `sixfold-${new Date().toISOString().slice(0,
   await saveVideo(v, name);
   toast(`Video saved (${v.ext.toUpperCase()}) ✦`);
 }
-$('record-btn').addEventListener('click', () => (recorder.recording ? stopRecording() : startRecording({ sub: `${state.size}×${state.size} · sixfold` })));
-function recordSolve(recon) {
-  if (!recon || recorder.recording) return;
-  startRecording({ caption: () => fmt(Math.min(recon.ms, Math.max(0, performance.now() - replayT0))), sub: recon.label });
+$('record-btn').addEventListener('click', () => (recorder?.recording ? stopRecording() : startRecording({ sub: `${state.size}×${state.size} · sixfold` })));
+async function recordSolve(recon) {
+  if (!recon || recorder?.recording) return;
+  await startRecording({ caption: () => fmt(Math.min(recon.ms, Math.max(0, performance.now() - replayT0))), sub: recon.label });
   toast('Recording your replay…');
   replay(recon, () => stopRecording(`sixfold-solve-${fmt(recon.ms).replace(/[:.]/g, '-')}`));
 }
@@ -616,47 +620,62 @@ const timer = initTimer({
   record: recordSolve,
   getSize: () => state.size,
   needSize: n => setPuzzle(n),
-  openStats: () => statsView.open(),
+  openStats: async () => {
+    statsView ??= (await import('./statsview.js')).initStatsView({ getSolves: () => timer.all(), setSolves: l => timer.replaceAll(l), getSize: () => state.size, toast });
+    statsView.open();
+  },
   loadScramble: seq => setCube(new CubeState().move(seq).facelets()),
   isSolved: () => state.isSolved(),
   getFacelets: () => state.facelets(),
   splits: (start, moves) => (sizeOf(start) === 3 ? cfopSplits(start, moves) : [-1, -1, -1, -1]),
   celebrate: () => { cube.celebrate(); chime(); },
 });
-const train = initTrain({
-  store, toast,
-  load: f => setCube(f),
-  getState: () => state,
-  playSeq: seq => seq.forEach(t => move(t, { record: false })),
-  celebrate: () => { cube.celebrate(); chime(); },
-});
-const scan = initScan({
-  toast,
-  onDone(raw) {
-    setCube(raw);
-    setMode('solve');
-    const err = problem(raw);
-    toast(err ? `Scanned — but check it: ${err}` : 'Scanned! Tap “Solve this cube”.');
-  },
-});
-initGesture({ cube, stage: $('stage') });
-initConnect({
-  move: t => move(t),
-  setCube: f => setCube(f),
-  toast,
-  command(c) {
-    if (c === 'scramble') scramble();
-    else if (c === 'solve') { setMode('solve'); solve(); }
-    else if (c === 'undo') undo();
-    else if (c === 'redo') redo();
-    else if (c === 'reset') setCube();
-    else if (c === 'play') { if (solution && !solution.playing) togglePlay(); }
-    else if (c === 'pause') { if (solution?.playing) togglePlay(); }
-    else if (c === 'next') step(1);
-  },
-});
+// Panels you haven't opened yet aren't downloaded yet — they load on first visit.
+let train = null, scan = null, statsView = null;
+const loaded = {};
+function loadPanel(m) {
+  if (loaded[m]) return;
+  if (m === 'train') loaded[m] = import('./train.js').then(({ initTrain }) => {
+    train = initTrain({
+      store, toast,
+      load: f => setCube(f),
+      getState: () => state,
+      playSeq: seq => seq.forEach(t => move(t, { record: false })),
+      celebrate: () => { cube.celebrate(); chime(); },
+    });
+  });
+  if (m === 'scan') loaded[m] = import('./scan.js').then(({ initScan }) => {
+    scan = initScan({
+      toast,
+      onDone(raw) {
+        setCube(raw);
+        setMode('solve');
+        const err = problem(raw);
+        toast(err ? `Scanned — but check it: ${err}` : 'Scanned! Tap “Solve this cube”.');
+      },
+    });
+  });
+  if (m === 'connect') loaded[m] = Promise.all([import('./gesture.js'), import('./connect.js')]).then(([{ initGesture }, { initConnect }]) => {
+    initGesture({ cube, stage: $('stage') });
+    initConnect({
+      move: t => move(t),
+      setCube: f => setCube(f),
+      toast,
+      command(c) {
+        if (c === 'scramble') scramble();
+        else if (c === 'solve') { setMode('solve'); solve(); }
+        else if (c === 'undo') undo();
+        else if (c === 'redo') redo();
+        else if (c === 'reset') setCube();
+        else if (c === 'play') { if (solution && !solution.playing) togglePlay(); }
+        else if (c === 'pause') { if (solution?.playing) togglePlay(); }
+        else if (c === 'next') step(1);
+      },
+    });
+  });
+  loaded[m]?.catch(() => { delete loaded[m]; toast('Couldn’t load that panel — check your connection.'); });
+}
 initTheme({ cube, store });
-const statsView = initStatsView({ getSolves: () => timer.all(), setSolves: l => timer.replaceAll(l), getSize: () => state.size, toast });
 
 // ---------- share this cube ----------
 $('share-btn').addEventListener('click', async () => {
@@ -693,8 +712,8 @@ addEventListener('keydown', e => {
   if (e.key === '?') { openKeys(); return; }
   if (replayTimers.length && e.key === 'Escape') { cancelReplay(); return; }
   if (mode === 'time' && timer.keydown(e)) return;
-  if (mode === 'train' && train.keydown(e)) return;
-  if (mode === 'scan' && e.code === 'Space') { e.preventDefault(); scan.capture(); return; }
+  if (mode === 'train' && train?.keydown(e)) return;
+  if (mode === 'scan' && e.code === 'Space') { e.preventDefault(); scan?.capture(); return; }
   if (solution && e.code === 'Space' && (mode === 'solve' || mode === 'learn' || mode === 'play')) { e.preventDefault(); togglePlay(); return; }
   if (e.key === 'Escape' && solution) { solution.playing = false; render(); return; }
   if (solution && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
@@ -749,3 +768,15 @@ setMode(tabs.some(t => t.dataset.mode === initial) ? initial : 'play');
 render();
 if (!reduceMotion) cube.assemble();
 if (import.meta.env.DEV) window.sixfold = { cube, state, get solution() { return solution; } }; // debugging handle
+// ---------- first-visit tour (loaded only when needed) ----------
+async function startTour() {
+  const { initTour } = await import('./tour.js');
+  // demo turns bypass history and solve tracking so the cube quietly returns to where it was
+  const demoTurn = t => { state.move(t); cube.turn(t); click(); wasSolved = state.isSolved(); };
+  initTour({ cube, demoTurn, store }).start();
+}
+document.querySelectorAll('[data-tour]').forEach(b => b.addEventListener('click', () => { dialog.close(); setMode('play'); startTour(); }));
+if (!store.get('toured', false) && !shared && mode === 'play') setTimeout(startTour, reduceMotion ? 300 : 2200);
+
+performance.mark('sixfold:ready');
+setTimeout(() => (window.requestIdleCallback ?? setTimeout)(getWorker), 1500);

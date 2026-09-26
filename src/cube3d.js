@@ -68,7 +68,6 @@ export class Cube3D {
     el.appendChild(r.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.environment = new THREE.PMREMGenerator(r).fromScene(new RoomEnvironment(), 0.04).texture;
     this.scene.environmentIntensity = 0.35;
     const key = new THREE.DirectionalLight('#fff6ea', 1.5); key.position.set(4, 9, 6);
     const rim = new THREE.DirectionalLight('#8f73ff', 2.2); rim.position.set(-7, 3, -5);
@@ -333,6 +332,14 @@ export class Cube3D {
     }
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
+    if (!this.drawn) {
+      this.drawn = true;
+      performance.mark('sixfold:first-frame');
+      // the soft reflections cost ~50 ms of shader work: add them once the cube is already on screen
+      (window.requestIdleCallback ?? setTimeout)(() => {
+        this.scene.environment = new THREE.PMREMGenerator(this.renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+      });
+    }
     this.onFrame?.();
   }
 
@@ -406,6 +413,12 @@ export class Cube3D {
     const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).transformDirection(inv);
     const k = [0, 1, 2].reduce((a, b) => (Math.abs(n.getComponent(b)) > Math.abs(n.getComponent(a)) ? b : a));
     return { n: new THREE.Vector3().setComponent(k, Math.sign(n.getComponent(k))), p: this.root.worldToLocal(hit.point.clone()), obj: hit.object };
+  }
+
+  // Page coordinates of a point given in cube units (used by the tour's ghost finger).
+  screenPoint(p) {
+    const r = this.renderer.domElement.getBoundingClientRect(), v = this.toScreen(new THREE.Vector3(...p).multiplyScalar(GAP));
+    return { x: r.left + v.x, y: r.top + v.y };
   }
 
   toScreen(p) {

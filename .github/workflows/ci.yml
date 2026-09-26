@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -21,10 +25,9 @@ jobs:
         with:
           path: dist
 
-  # Publishes to GitHub Pages when run by hand (Actions → CI → Run workflow).
-  # Pages must be enabled with "GitHub Actions" as the source.
+  # Every push to main publishes to GitHub Pages (source: GitHub Actions).
   deploy:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: test
     runs-on: ubuntu-latest
     permissions:

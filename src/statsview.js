@@ -145,15 +145,15 @@ export function initStatsView({ getSolves, setSolves, getSize, toast }) {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }
-  const SCR = { 222: '222so', 333: '333', 444: '444wca' };
+  const SCR = { 222: '222so', 333: '333', 444: '444wca', '333bld': '333ni' };
   $('export-cstimer').addEventListener('click', () => {
     const all = getSolves(), out = { properties: {} }, meta = {};
-    ['222', '333', '444'].forEach((p, k) => {
+    ['222', '333', '444', '333bld'].forEach((p, k) => {
       const L = all.filter(s => (s.puzzle ?? '333') === p);
       if (!L.length) return;
       const key = `session${k + 1}`;
       out[key] = L.map(s => [[s.pen === 'dnf' ? -1 : s.pen === 2 ? 2000 : 0, s.ms], s.scramble ?? '', '', Math.round(s.at / 1000)]);
-      meta[k + 1] = { name: `Sixfold ${p[0]}×${p[0]}`, opt: { scrType: SCR[p] } };
+      meta[k + 1] = { name: `Sixfold ${p[0]}×${p[0]}${p.endsWith('bld') ? ' blind' : ''}`, opt: { scrType: SCR[p] } };
     });
     out.properties.sessionData = JSON.stringify(meta);
     download(JSON.stringify(out), `sixfold-cstimer-${new Date().toISOString().slice(0, 10)}.txt`, 'application/json');
@@ -175,7 +175,7 @@ export function initStatsView({ getSolves, setSolves, getSize, toast }) {
         const m = /^session(\d+)$/.exec(key);
         if (!m || !Array.isArray(rows)) continue;
         const scr = meta[m[1]]?.opt?.scrType ?? '333';
-        const p = /222/.test(scr) ? '222' : /444/.test(scr) ? '444' : '333';
+        const p = /222/.test(scr) ? '222' : /444/.test(scr) ? '444' : /333ni|bld/.test(scr) ? '333bld' : '333';
         for (const r of rows) {
           const [[pen, ms], scramble, , ts] = r;
           const s = { ms, pen: pen === -1 ? 'dnf' : pen === 2000 ? 2 : 0, scramble, at: ts * 1000, puzzle: p };
@@ -198,8 +198,8 @@ export function initStatsView({ getSolves, setSolves, getSize, toast }) {
   dlg.addEventListener('close', hideTip);
 
   return {
-    open() {
-      puzzle = puzzleId(getSize());
+    open(blind = false) {
+      puzzle = puzzleId(getSize(), blind);
       render();
       dlg.showModal();
     },

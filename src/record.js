@@ -1,6 +1,7 @@
 // Records the live 3D view as a video. Every rendered frame, the WebGL canvas is composited onto a
 // square 1080×1080 canvas with the site's backdrop, the wordmark and a caption; MediaRecorder encodes it.
-const TYPES = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+const VIDEO_ONLY = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+const WITH_AUDIO = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', ...VIDEO_ONLY];
 
 export function createRecorder(cube) {
   const out = document.createElement('canvas');
@@ -49,13 +50,16 @@ export function createRecorder(cube) {
     canvas: out,
     get recording() { return !!rec; },
     supported: typeof MediaRecorder !== 'undefined' && !!out.captureStream,
-    start({ caption = '', sub = '' } = {}) {
+    // audio: an optional live MediaStream (the app's sound bus) mixed into the video
+    start({ caption = '', sub = '', audio = null } = {}) {
       Object.assign(state, { caption, sub });
-      type = TYPES.find(t => MediaRecorder.isTypeSupported(t)) ?? '';
+      const stream = out.captureStream(60);
+      audio?.getAudioTracks().forEach(t => stream.addTrack(t));
+      type = (audio ? WITH_AUDIO : VIDEO_ONLY).find(t => MediaRecorder.isTypeSupported(t)) ?? '';
       chunks = [];
       cube.onFrame = draw;
       draw();
-      rec = new MediaRecorder(out.captureStream(60), { mimeType: type, videoBitsPerSecond: 10e6 });
+      rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 10e6 });
       rec.ondataavailable = e => e.data.size && chunks.push(e.data);
       rec.start(250);
     },

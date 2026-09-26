@@ -1,6 +1,7 @@
 import { SETS, caseState, reached, diagram, moveCount } from './algs.js';
 import { fmt } from './stats.js';
 import { tokens, invertMove } from './state.js';
+import { emit } from './core/events.js';
 
 // Algorithm trainer: timed drills (solve the case on screen) and a recognition quiz.
 export function initTrain({ store, load, getState, playSeq, toast, celebrate }) {
@@ -71,6 +72,7 @@ export function initTrain({ store, load, getState, playSeq, toast, celebrate }) 
     b.classList.add(right ? 'right' : 'wrong');
     $('quiz').querySelector(`[data-n="${CSS.escape(current.name)}"]`).classList.add('right');
     streak = right ? streak + 1 : 0;
+    emit('quiz', { streak });
     $('drill-name').textContent = right ? `Streak ${streak}` : `It was ${current.name}`;
     if (right && streak % 5 === 0) celebrate();
     reveal();

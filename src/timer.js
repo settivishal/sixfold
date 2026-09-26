@@ -1,56 +1,67 @@
 import { average, fmt } from './stats.js';
 import { Cube3D } from './cube3d.js';
 import { CubeState } from './state.js';
+import { emit } from './core/events.js';
+import { dailyScramble, dayNumber } from './shared/daily.js';
 
-// Speedcubing timer. "physical": hold Space → green → release to start, any key stops.
-// "virtual": Space loads the scramble on screen; the first turn starts, solving stops.
-export const DAILY_NO = Math.floor((Date.now() - Date.UTC(2026, 0, 1)) / 864e5) + 1;
+// Speedcubing timer with three events:
+//   physical  hold Space → green → release to start, any key stops (a real cube in your hands)
+//   virtual   Space loads the scramble on screen; the first turn starts, solving stops
+//   blind     Space loads it and starts the clock while you memorise; your first turn (or Space)
+//             puts the blindfold on; Space or Enter lifts it — solved counts, anything else is a DNF
+export const DAILY_NO = dayNumber();
 const SPLIT_NAMES = ['Cross', 'F2L', 'OLL', 'PLL'];
 const BLOCKS = { Cross: '🟪', F2L: '🟦', OLL: '🟨', PLL: '🟩' };
 const isRot = t => /^[xyz]/.test(t);
-export const puzzleId = n => `${n}${n}${n}`;
+export const puzzleId = (n, blind = false) => `${n}${n}${n}${blind ? 'bld' : ''}`;
 export const solveValue = s => (s.pen === 'dnf' ? Infinity : s.ms + (s.pen === 2 ? 2000 : 0));
 
-export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, needSize, splits, replay, record, openStats, store, toast, celebrate }) {
+export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, needSize, splits, replay, record, challenge: shareChallenge, blindfold, openStats, store, toast, celebrate }) {
   const $ = id => document.getElementById(id);
   const display = $('timer-display'), scrambleEl = $('scramble-text'), help = $('timer-help');
   let kind = store.get('timerKind', 'physical');
   let inspectOn = store.get('inspection', false);
   let solves = store.get('solves', []); // { ms, pen: 0 | 2 | 'dnf', scramble, at, puzzle }
-  let daily = false, recording = [], startFacelets = '', lastRecon = null;
+  let daily = false, versus = null, recording = [], startFacelets = '', lastRecon = null;
   let scramble = '', scrambleSize = 0, phase = 'idle', prior = 'idle', t0 = 0, inspectAt = 0, penalty = 0, holdTimer = 0, active = false;
 
   const value = solveValue;
+  const onScreen = () => kind !== 'physical';
   const save = () => store.set('solves', solves);
-  const pid = () => puzzleId(getSize());
+  const pid = () => puzzleId(getSize(), kind === 'blind');
   const mine = () => solves.filter(s => (s.puzzle ?? '333') === pid());
 
   async function newScramble() {
-    scrambleEl.textContent = 'Shuffling…';
     const size = getSize();
+    if (versus) return useScramble(versus.scramble, versus.puzzle);
+    if (daily) return useScramble(dailyScramble(DAILY_NO), 3); // the server derives the same one to verify results
+    scrambleEl.textContent = 'Shuffling…';
     let fresh;
     try {
-      fresh = await ask('scramble', { size, seed: daily ? (DAILY_NO * 2654435761) >>> 0 : undefined });
+      fresh = await ask('scramble', { size });
     } catch {
       fresh = randomMoves(); // solver failed to load — fall back to random moves
     }
-    if (size !== getSize()) return; // the puzzle changed while this was generating; a fresher request is on its way
-    scramble = fresh;
+    if (size !== getSize() || daily || versus) return; // things changed while this was generating
+    useScramble(fresh, size);
+  }
+  function useScramble(s, size) {
+    scramble = s;
     scrambleSize = size;
     scrambleEl.textContent = scramble;
-    if (active && phase === 'idle' && kind === 'physical') loadScramble(scramble);
+    if (active && phase === 'idle' && kind === 'physical' && size === getSize()) loadScramble(scramble);
   }
 
   function paint() {
-    display.className = 'timer-display ' + ({ holding: 'holding', ready: 'ready', inspect: 'inspect', armed: 'inspect' }[phase] ?? '');
-    document.body.classList.toggle('focus', phase === 'running' || phase === 'ready' || phase === 'inspect');
+    display.className = 'timer-display ' + ({ holding: 'holding', ready: 'ready', inspect: 'inspect', armed: 'inspect', memo: 'memo' }[phase] ?? '');
+    document.body.classList.toggle('focus', ['running', 'ready', 'inspect', 'memo'].includes(phase));
     if (phase === 'ready') display.textContent = '0.00';
     if (phase === 'armed') display.textContent = 'Go';
   }
 
   function frame() {
     const now = performance.now();
-    if (phase === 'running') display.textContent = fmt(now - t0);
+    if (phase === 'running' || phase === 'memo') display.textContent = fmt(now - t0);
     if (phase === 'inspect' || (phase === 'holding' && prior === 'inspect') || (phase === 'ready' && inspectAt)) {
       const left = 15 - (now - inspectAt) / 1000;
       penalty = left > 0 ? 0 : left > -2 ? 2 : 'dnf';
@@ -89,19 +100,44 @@ export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, n
     render();
     showResult(s);
     finishRace(s);
-    if (!daily) newScramble();
+    emit('solve', { ...s, kind, daily, blind: kind === 'blind', recording: recording.slice(), start: startFacelets });
+    if (!daily && !versus) newScramble();
   }
 
-  // ---- ghost race: a second cube replays your best solve, move for move, in real time ----
+  // ---- blindfolded ----
+  function beginBlind() {
+    if (scrambleSize !== getSize()) return newScramble();
+    loadScramble(scramble);
+    startFacelets = getFacelets();
+    recording = [];
+    phase = 'memo';
+    t0 = performance.now();
+    paint();
+    toast('Memorise… your first turn (or Space) puts the blindfold on');
+  }
+  function blindOn() {
+    phase = 'running';
+    blindfold(true);
+    paint();
+  }
+  function blindDone() {
+    blindfold(false);
+    penalty = isSolved() ? 0 : 'dnf';
+    toast(penalty ? 'Blindfold off — not quite solved (DNF)' : 'Blindfold off — solved without looking ✦');
+    stop();
+  }
+
+  // ---- ghost race: a second cube replays a recorded solve, move for move, in real time.
+  // The ghost is your own best, or — for a challenge link — your friend's solve on this scramble.
   let ghostCube = null, race = null, ghostOn = store.get('ghostOn', false);
   const ghostKey = () => (daily ? `ghost.daily.${DAILY_NO}` : `ghost.${pid()}`);
   const ghostBtn = $('ghost-btn');
   function setGhostBtn() {
     ghostBtn.setAttribute('aria-pressed', ghostOn);
-    ghostBtn.hidden = kind !== 'virtual';
-    $('ghost').hidden = !(ghostOn && kind === 'virtual' && active);
-    const data = store.get(ghostKey());
-    $('ghost-label').textContent = data ? `Ghost · ${fmt(data.ms)}` : 'Ghost';
+    ghostBtn.hidden = kind !== 'virtual' || !!versus;
+    $('ghost').hidden = !((ghostOn || versus) && kind === 'virtual' && active);
+    const data = versus ?? store.get(ghostKey());
+    $('ghost-label').textContent = versus ? `${versus.name} · ${fmt(versus.ms)}` : data ? `Ghost · ${fmt(data.ms)}` : 'Ghost';
     if (ghostOn && !data) $('ghost-time').textContent = 'finish a solve to create one';
   }
   ghostBtn.addEventListener('click', () => {
@@ -113,7 +149,7 @@ export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, n
   function prepareRace() {
     race?.timers.forEach(clearTimeout);
     race = null;
-    const data = ghostOn && kind === 'virtual' && store.get(ghostKey());
+    const data = kind === 'virtual' && (versus ?? (ghostOn && store.get(ghostKey())));
     setGhostBtn();
     if (!data) return;
     ghostCube ??= new Cube3D($('ghost-stage'), { interactive: false });
@@ -130,20 +166,26 @@ export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, n
   }
   function finishRace(s) {
     const mineMs = value(s);
-    if (kind === 'virtual' && recording.length && mineMs !== Infinity) {
+    if (kind === 'virtual' && recording.length && mineMs !== Infinity && !versus) {
       const cur = store.get(ghostKey());
       if (!cur || mineMs < cur.ms) store.set(ghostKey(), { ms: mineMs, start: startFacelets, moves: recording });
     }
     if (!race?.running) return setGhostBtn();
-    const diff = mineMs - race.data.ms;
-    toast(diff < 0 ? `You beat your ghost by ${fmt(-diff)} ✦` : `Ghost wins by ${fmt(diff)} — go again`);
-    if (diff >= 0) race.timers.forEach(clearTimeout);
+    const diff = mineMs - race.data.ms, won = diff < 0;
+    if (versus) {
+      toast(won ? `You beat ${versus.name} by ${fmt(-diff)} ⚔️` : `${versus.name} wins by ${fmt(diff)} — rematch?`);
+      emit('challenge', { won, diff });
+    } else {
+      toast(won ? `You beat your ghost by ${fmt(-diff)} ✦` : `Ghost wins by ${fmt(diff)} — go again`);
+      emit('ghost', { won, diff });
+    }
+    if (!won) race.timers.forEach(clearTimeout);
     setTimeout(() => $('ghost').classList.remove('finished'), 2500);
     race.running = false;
     setGhostBtn();
   }
 
-  // ---- result card: splits, TPS, replay, video, share ----
+  // ---- result card: splits, TPS, replay, video, challenge, share ----
   function showResult(s) {
     const res = $('result'), total = value(s), virtual = kind === 'virtual' && recording.length;
     let segs = [];
@@ -157,25 +199,30 @@ export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, n
         prevT = t;
         prevI = i;
       });
-      lastRecon = { start: startFacelets, moves: recording.slice(), ms: total, label: daily ? `Daily #${DAILY_NO}` : `${getSize()}×${getSize()}` };
+    }
+    if (onScreen() && recording.length) {
+      lastRecon = { puzzle: getSize(), scramble, start: startFacelets, moves: recording.slice(), ms: total, label: daily ? `Daily #${DAILY_NO}` : `${getSize()}×${getSize()}${kind === 'blind' ? ' blind' : ''}` };
     }
     const turns = recording.filter(m => !isRot(m.tok)).length;
     if (daily) {
       const best = store.get(`daily.${DAILY_NO}`);
       if (total !== Infinity && (!best || total < best)) store.set(`daily.${DAILY_NO}`, total);
     }
+    const canRace = virtual && total !== Infinity;
     res.hidden = false;
     res.innerHTML = `
-      <div class="res-head"><span>${daily ? `Daily #${DAILY_NO}` : 'Last solve'}</span><b>${fmt(total)}</b></div>
+      <div class="res-head"><span>${daily ? `Daily #${DAILY_NO}` : kind === 'blind' ? 'Blindfolded' : 'Last solve'}</span><b>${fmt(total)}</b></div>
       ${segs.length ? `<div class="split-bar">${segs.map(g => `<i class="sp-${g.name}" style="flex:${Math.max(g.ms, 60)}" title="${g.name}"></i>`).join('')}</div>
       <ul class="split-list">${segs.map(g => `<li><i class="sp-${g.name}"></i>${g.name}<span>${fmt(g.ms)}</span><em>${g.moves} mv</em></li>`).join('')}</ul>` : ''}
-      ${virtual ? `<p class="res-meta">${turns} moves · ${(turns / (s.ms / 1000)).toFixed(2)} turns/sec</p>` : ''}
+      ${onScreen() && recording.length ? `<p class="res-meta">${turns} moves · ${(turns / (s.ms / 1000)).toFixed(2)} turns/sec</p>` : ''}
       <div class="row">
-        ${virtual ? '<button class="btn ghost" data-act="replay">Replay</button><button class="btn ghost" data-act="video">Video</button>' : ''}
+        ${onScreen() && recording.length ? '<button class="btn ghost" data-act="replay">Replay</button><button class="btn ghost" data-act="video">Video</button>' : ''}
         <button class="btn ghost" data-act="share">Share</button>
-      </div>`;
+      </div>
+      ${canRace ? `<button class="btn wide challenge-btn" data-act="race">⚔️ ${versus ? `Send it back to ${versus.name}` : 'Challenge a friend to beat this'}</button>` : ''}`;
     res.querySelector('[data-act=replay]')?.addEventListener('click', () => replay(lastRecon));
     res.querySelector('[data-act=video]')?.addEventListener('click', () => record(lastRecon));
+    res.querySelector('[data-act=race]')?.addEventListener('click', e => shareChallenge(lastRecon, e.currentTarget));
     res.querySelector('[data-act=share]').addEventListener('click', () => share(total, segs, turns));
   }
 
@@ -183,7 +230,7 @@ export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, n
     const sum = segs.reduce((a, g) => a + g.ms, 0) || 1;
     const bar = segs.map(g => BLOCKS[g.name].repeat(Math.max(1, Math.round((g.ms / sum) * 10)))).join('');
     const text = [
-      daily ? `Sixfold Daily #${DAILY_NO} ✦` : `Sixfold ${getSize()}×${getSize()} ✦`,
+      daily ? `Sixfold Daily #${DAILY_NO} ✦` : `Sixfold ${getSize()}×${getSize()}${kind === 'blind' ? ' blindfolded' : ''} ✦`,
       `⏱ ${fmt(total)}${turns ? ` · ${turns} moves` : ''}`,
       bar,
       segs.map(g => `${g.name.toLowerCase()} ${fmt(g.ms)}`).join(' · '),
@@ -195,20 +242,33 @@ export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, n
     } catch { /* share sheet dismissed */ }
   }
 
-  const dailyBtn = $('daily-btn');
+  // ---- daily & challenge modes ----
+  const dailyBtn = $('daily-btn'), versusChip = $('versus-chip');
   dailyBtn.textContent = `✦ Daily #${DAILY_NO}`;
+  const dailyMode = () => emit('dailymode', { on: daily && active });
   dailyBtn.addEventListener('click', () => {
     daily = !daily;
+    if (daily) endVersus(true);
     dailyBtn.setAttribute('aria-pressed', daily);
     abort();
     if (daily && getSize() !== 3) needSize(3); // the daily is a 3×3 challenge; needSize re-scrambles
     else newScramble();
     setGhostBtn();
+    dailyMode();
     if (daily) toast(`Daily #${DAILY_NO}: everyone gets this scramble today`);
   });
+  function endVersus(quiet) {
+    if (!versus) return;
+    versus = null;
+    versusChip.hidden = true;
+    setGhostBtn();
+    if (!quiet) { abort(); newScramble(); toast('Challenge closed'); }
+  }
+  versusChip.addEventListener('click', () => endVersus(false));
 
   function abort() {
     clearTimeout(holdTimer);
+    if (phase === 'running' && kind === 'blind') blindfold(false);
     phase = 'idle';
     inspectAt = 0;
     penalty = 0;
@@ -232,6 +292,7 @@ export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, n
   function keydown(e) {
     if (e.key === 'Escape' && phase !== 'idle') { abort(); return true; }
     if (kind === 'physical' && phase === 'running') { e.preventDefault(); stop(); return true; }
+    if (kind === 'blind' && phase === 'running' && e.key === 'Enter') { e.preventDefault(); blindDone(); return true; }
     if (e.code !== 'Space') return false;
     e.preventDefault();
     if (e.repeat) return true;
@@ -246,6 +307,12 @@ export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, n
   }
   function press() {
     if (kind === 'virtual') { if (phase === 'idle') beginVirtual(); return; }
+    if (kind === 'blind') {
+      if (phase === 'idle') beginBlind();
+      else if (phase === 'memo') blindOn();
+      else if (phase === 'running') blindDone();
+      return;
+    }
     if (phase === 'running') return stop();
     if (phase !== 'idle' && phase !== 'inspect') return;
     prior = phase;
@@ -264,7 +331,12 @@ export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, n
   display.addEventListener('pointerup', release);
 
   function onMove(tok) {
-    if (!active || kind !== 'virtual' || phase === 'idle') return;
+    if (!active || !onScreen() || phase === 'idle') return;
+    if (kind === 'blind') {
+      if (phase === 'memo' && !isRot(tok)) blindOn();
+      recording.push({ tok, t: Math.round(performance.now() - t0) });
+      return; // no auto-stop: you decide when you're done, like the real event
+    }
     if ((phase === 'armed' || phase === 'inspect') && !isRot(tok)) start();
     recording.push({ tok, t: phase === 'running' ? Math.round(performance.now() - t0) : 0 });
     if (phase === 'running' && isSolved()) stop();
@@ -272,25 +344,31 @@ export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, n
 
   // ---- panel ----
   const kindBtns = [...document.querySelectorAll('#timer-kind button')];
+  const HELP = {
+    physical: 'Scramble your real cube as shown. Hold <kbd>Space</kbd> (or press the clock) until it turns green, release to start, press any key to stop.',
+    virtual: 'Press <kbd>Space</kbd> to load the scramble. Your first turn starts the clock; solving stops it. Cube rotations are free.',
+    blind: '<kbd>Space</kbd> loads the scramble and starts the clock — memorise it. Your first turn (or <kbd>Space</kbd>) puts the blindfold on; <kbd>Space</kbd> or <kbd>Enter</kbd> takes it off. Unsolved counts as a DNF.',
+  };
   function setKind(k) {
+    if (phase !== 'idle') abort();
     kind = k;
+    if (k !== 'virtual') endVersus(true);
     store.set('timerKind', k);
     kindBtns.forEach(b => b.setAttribute('aria-checked', b.dataset.kind === k));
-    help.innerHTML = k === 'physical'
-      ? 'Scramble your real cube as shown. Hold <kbd>Space</kbd> (or press the clock) until it turns green, release to start, press any key to stop.'
-      : 'Press <kbd>Space</kbd> to load the scramble. Your first turn starts the clock; solving stops it. Cube rotations are free.';
+    help.innerHTML = HELP[k];
     abort();
+    render();
     setGhostBtn();
   }
   kindBtns.forEach(b => b.addEventListener('click', () => setKind(b.dataset.kind)));
   const insp = $('inspection');
   insp.checked = inspectOn;
   insp.addEventListener('change', () => store.set('inspection', (inspectOn = insp.checked)));
-  $('new-scramble').addEventListener('click', () => { abort(); newScramble(); });
-  $('stats-open').addEventListener('click', () => openStats());
+  $('new-scramble').addEventListener('click', () => { abort(); endVersus(true); newScramble(); });
+  $('stats-open').addEventListener('click', () => openStats(kind === 'blind'));
   $('clear-times').addEventListener('click', () => {
     const list = mine();
-    if (!list.length || !confirm(`Delete all ${list.length} ${getSize()}×${getSize()} times?`)) return;
+    if (!list.length || !confirm(`Delete all ${list.length} ${getSize()}×${getSize()}${kind === 'blind' ? ' blindfolded' : ''} times?`)) return;
     solves = solves.filter(s => !list.includes(s));
     save();
     render();
@@ -353,6 +431,7 @@ export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, n
     activate(on) {
       active = on;
       setGhostBtn();
+      dailyMode();
       if (!on) return abort();
       if (scramble && scrambleSize === getSize()) { if (kind === 'physical') loadScramble(scramble); }
       else newScramble();
@@ -360,16 +439,31 @@ export function initTimer({ ask, loadScramble, isSolved, getFacelets, getSize, n
     // the puzzle size changed: fresh stats and a scramble for the new puzzle
     onPuzzle() {
       abort();
-      if (daily && getSize() !== 3) { daily = false; dailyBtn.setAttribute('aria-pressed', false); }
+      if (daily && getSize() !== 3) { daily = false; dailyBtn.setAttribute('aria-pressed', false); dailyMode(); }
+      if (versus && getSize() !== versus.puzzle) endVersus(true);
       $('result').hidden = true;
       render();
       setGhostBtn();
       if (active) newScramble();
       else scrambleSize = 0;
     },
+    // Race a friend's recorded solve on the same scramble (from a challenge link).
+    startChallenge(c) {
+      daily = false;
+      dailyBtn.setAttribute('aria-pressed', false);
+      versus = c;
+      if (getSize() !== c.puzzle) needSize(c.puzzle);
+      setKind('virtual');
+      useScramble(c.scramble, c.puzzle);
+      versusChip.hidden = false;
+      versusChip.textContent = `⚔️ vs ${c.name} · ${fmt(c.ms)}  ✕`;
+      prepareRace(); // show your rival's cube, scrambled and waiting, straight away
+      dailyMode();
+    },
     all: () => solves,
     replaceAll(list) { solves = list; save(); render(); },
     get busy() { return phase !== 'idle'; },
+    get blindActive() { return kind === 'blind' && phase !== 'idle'; },
   };
 }
 

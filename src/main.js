@@ -4,12 +4,19 @@ import { STAGES, stageFocus, cfopSplits } from './learn.js';
 import { initTimer } from './timer.js';
 import { initTheme } from './theme.js';
 import { fmt } from './stats.js';
+import { store, migrate } from './core/storage.js';
+import { emit } from './core/events.js';
+import { createAudio } from './audio.js';
+import { createBackend } from './services/backend.js';
+import { follow, coachHint } from './follow.js';
+import { initAchievements } from './features/achievements.js';
+import { initLeaderboard } from './features/leaderboard.js';
+import { initPalette } from './features/palette.js';
+import { challengeLink, challengeFromUrl } from './features/challenge.js';
 
 const $ = id => document.getElementById(id);
-const store = {
-  get(k, d) { try { return JSON.parse(localStorage.getItem('sixfold.' + k)) ?? d; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('sixfold.' + k, JSON.stringify(v)); } catch { /* private mode */ } },
-};
+migrate(store);
+const backend = createBackend(store);
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 let toastTimer;
@@ -41,42 +48,16 @@ const ask = (type, data = {}) => new Promise((resolve, reject) => {
 });
 
 // ---------- sound ----------
-let soundOn = store.get('sound', true), audio, clickBuf, lastChime = 0;
-function click() {
-  if (!soundOn) return;
-  audio ??= new AudioContext();
-  if (!clickBuf) {
-    clickBuf = audio.createBuffer(1, 2400, 44100);
-    const d = clickBuf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length) ** 8;
-  }
-  const src = audio.createBufferSource(), f = audio.createBiquadFilter(), g = audio.createGain();
-  src.buffer = clickBuf;
-  f.type = 'bandpass';
-  f.frequency.value = 1500 + Math.random() * 900;
-  f.Q.value = 1.1;
-  g.gain.value = 0.55;
-  src.connect(f).connect(g).connect(audio.destination);
-  src.start();
-}
-function chime() {
-  if (!soundOn || !audio || performance.now() - lastChime < 1500) return;
-  lastChime = performance.now();
-  [523.25, 659.25, 783.99, 1046.5].forEach((hz, i) => {
-    const o = audio.createOscillator(), g = audio.createGain(), t = audio.currentTime + i * 0.09;
-    o.type = 'sine';
-    o.frequency.value = hz;
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.12, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
-    o.connect(g).connect(audio.destination);
-    o.start(t);
-    o.stop(t + 1.3);
+const audio = createAudio(store);
+const chime = () => audio.chime();
+document.querySelectorAll('#sound-modes button').forEach(b => {
+  b.setAttribute('aria-pressed', b.dataset.sound === audio.mode);
+  b.addEventListener('click', () => {
+    audio.setMode(b.dataset.sound);
+    document.querySelectorAll('#sound-modes button').forEach(x => x.setAttribute('aria-pressed', x === b));
+    if (b.dataset.sound === 'music') { audio.turn('R'); audio.turn('U'); }
   });
-}
-const soundBtn = $('sound-btn');
-soundBtn.setAttribute('aria-pressed', soundOn);
-soundBtn.addEventListener('click', () => { soundOn = !soundOn; store.set('sound', soundOn); soundBtn.setAttribute('aria-pressed', soundOn); });
+});
 
 // ---------- cube core ----------
 const state = new CubeState();
@@ -84,20 +65,54 @@ const cube = new Cube3D($('stage'), { onMove: (t, o) => move(t, o) });
 cube.setState(state);
 let hintTok = null, shownHint = null, lastPhi = 1.1, past = [], redoStack = [], solution = null, wasSolved = true, celebratePending = false, mode = 'play', replayTimers = [];
 
-function move(tok, { record = true, fromSolution = false, animated = false } = {}) {
+// auto: the move came from playback, a replay or a demo rather than from you
+function move(tok, { record = true, fromSolution = false, animated = false, auto = false } = {}) {
   if (cube.grabbing && !animated) return; // a finger is holding a layer — don't fight it
   state.move(tok);
   if (!animated) cube.turn(tok);
-  click();
+  audio.turn(tok);
   if (record) { past.push(tok); redoStack.length = 0; }
-  if (!fromSolution && solution) closeSolution();
+  if (!fromSolution && solution) coach(tok);
   if (!fromSolution) hintTok = null;
   timer.onMove(tok);
   train?.onMove(tok);
+  emit('move', { tok, size: state.size, byUser: !auto && !fromSolution });
   const solved = state.isSolved();
-  if (solved && !wasSolved) celebratePending = true;
+  if (solved && !wasSolved) {
+    celebratePending = true;
+    emit('solved', { size: state.size, byUser: !auto && !fromSolution });
+  }
   wasSolved = solved;
   render();
+}
+
+// Follow-along: moves you make yourself walk through the open solution or lesson.
+function coach(tok) {
+  const s = solution;
+  const c = { next: s.moves[s.i], prev: s.moves[s.i - 1], half: s.half, detour: s.detour };
+  const r = follow(c, tok);
+  s.half = c.half;
+  s.playing = false;
+  if (r === 'advance') { s.i++; stageCheck(); }
+  else if (r === 'rewind') s.i--;
+  else if (r === 'detour' && s.detour.length > 4) {
+    closeSolution();
+    toast('Off script — tap Solve or Teach for a fresh plan from here');
+  }
+}
+// announce stage boundaries and the end of a lesson, however you got there
+function stageCheck() {
+  const s = solution;
+  if (!s?.learn) return;
+  if (s.i >= s.moves.length) {
+    if (!s.finished) { s.finished = true; emit('lesson'); }
+    return;
+  }
+  const ended = s.stages.find(st => st.to === s.i && st.to > st.from);
+  if (ended) {
+    const nxt = s.stages.find(st => st.from >= s.i && st.to > st.from);
+    toast(`${ended.title} ✓ — next: ${nxt?.title ?? 'done'}`);
+  }
 }
 
 // Replace the whole cube (reset, scramble, paint, scan) — not undoable.
@@ -121,17 +136,14 @@ cube.onSettle = () => {
     celebratePending = false;
     cube.celebrate();
     chime();
-    if (mode !== 'time' && mode !== 'train') toast('Solved ✦');
+    if (mode !== 'time' && mode !== 'train' && !timer.blindActive) toast('Solved ✦');
   }
   const s = solution;
   if (!s?.playing) return;
   if (s.i >= s.moves.length) { s.playing = false; return render(); }
   // lessons pause between stages so there's time to read what's next
-  const ended = s.learn && s.stages.find(st => st.to === s.i && st.to > st.from);
-  if (ended) {
-    s.playing = false;
-    const nxt = s.stages.find(st => st.from >= s.i && st.to > st.from);
-    toast(`${ended.title} ✓ — next: ${nxt?.title ?? 'done'}`);
+  if (s.learn && s.stages.some(st => st.to === s.i && st.to > st.from)) {
+    s.playing = false; // lessons pause at each stage boundary (stageCheck already announced it)
     return render();
   }
   setTimeout(() => solution?.playing && !cube.busy && step(1), s.learn ? 160 : 90);
@@ -141,8 +153,7 @@ function undo() {
   if (!past.length) return;
   const t = past.pop();
   redoStack.push(t);
-  if (solution) solution.i = Math.max(0, solution.i - 1);
-  move(invertMove(t), { record: false, fromSolution: !!solution });
+  move(invertMove(t), { record: false });
 }
 function redo() {
   if (!redoStack.length) return;
@@ -155,7 +166,7 @@ function redo() {
 function openSolution(steps, stages, learn) {
   const moves = [];
   const st = steps.map(s => { const from = moves.length; moves.push(...tokens(s.seq)); return { ...s, from, to: moves.length }; });
-  solution = { moves, i: 0, playing: false, steps: st, stages, learn };
+  solution = { moves, i: 0, playing: false, steps: st, stages, learn, half: null, detour: [] };
   render();
 }
 function closeSolution() {
@@ -168,7 +179,8 @@ const stageAt = s => s.stages.find(st => st.from <= s.i && s.i < st.to) ?? s.sta
 function step(dir) {
   const s = solution;
   if (!s) return;
-  if (dir > 0 && s.i < s.moves.length) move(s.moves[s.i++], { fromSolution: true });
+  if (s.detour.length || s.half) return toast('Undo your own moves first — follow the ring');
+  if (dir > 0 && s.i < s.moves.length) { move(s.moves[s.i++], { fromSolution: true }); stageCheck(); }
   else if (dir < 0 && s.i > 0) move(invertMove(s.moves[--s.i]), { fromSolution: true });
   render();
 }
@@ -200,7 +212,7 @@ function render() {
   solvedEl.classList.toggle('solved', solved);
 
   const s = solution, pb = $('playback');
-  const want = s ? s.moves[s.i] ?? null : hintTok;
+  const want = s ? coachHint({ next: s.moves[s.i], half: s.half, detour: s.detour }) : hintTok;
   if (want !== shownHint) cube.setHint((shownHint = want));
   pb.hidden = !s;
   if (s) {
@@ -554,6 +566,7 @@ $('design-actions').addEventListener('click', async e => {
   else if (act === 'copy') { await navigator.clipboard?.writeText(designAlg); toast('Algorithm copied'); }
   else if (act === 'save') {
     myPatterns.unshift({ name: `Design ${myPatterns.length + 1}`, seq: designAlg });
+    emit('pattern');
     store.set('myPatterns', myPatterns);
     renderPatterns();
     toast('Saved to your gallery ✦');
@@ -584,7 +597,7 @@ function replay(recon, onDone) {
   setCube(recon.start);
   if (!onDone) toast('Replaying your solve in real time');
   replayT0 = performance.now() + 700;
-  recon.moves.forEach(({ tok, t }) => replayTimers.push(setTimeout(() => move(tok, { record: false }), 700 + t)));
+  recon.moves.forEach(({ tok, t }) => replayTimers.push(setTimeout(() => move(tok, { record: false, auto: true }), 700 + t)));
   if (onDone) replayTimers.push(setTimeout(onDone, 700 + (recon.moves.at(-1)?.t ?? 0) + 2200));
 }
 
@@ -597,7 +610,7 @@ async function startRecording(opts) {
     saveVideo = m.saveVideo;
   }
   if (!recorder.supported) return toast('Video recording isn’t supported in this browser.');
-  recorder.start(opts);
+  recorder.start({ ...opts, audio: audio.stream() });
   const t0 = performance.now();
   $('rec-badge').hidden = false;
   $('record-btn').setAttribute('aria-pressed', true);
@@ -627,11 +640,13 @@ async function recordSolve(recon) {
 const timer = initTimer({
   ask, store, toast, replay,
   record: recordSolve,
+  challenge: shareChallenge,
+  blindfold: on => { cube.setBlind(on); if (on) cube.setHint(null); },
   getSize: () => state.size,
   needSize: n => setPuzzle(n),
-  openStats: async () => {
+  openStats: async blind => {
     statsView ??= (await import('./statsview.js')).initStatsView({ getSolves: () => timer.all(), setSolves: l => timer.replaceAll(l), getSize: () => state.size, toast });
-    statsView.open();
+    statsView.open(blind);
   },
   loadScramble: seq => setCube(new CubeState(solvedFacelets(state.size)).move(seq).facelets()), // scramble the puzzle on screen, whatever its size
   isSolved: () => state.isSolved(),
@@ -649,7 +664,7 @@ function loadPanel(m) {
       store, toast,
       load: f => setCube(f),
       getState: () => state,
-      playSeq: seq => seq.forEach(t => move(t, { record: false })),
+      playSeq: seq => seq.forEach(t => move(t, { record: false, auto: true })),
       celebrate: () => { cube.celebrate(); chime(); },
     });
   });
@@ -684,7 +699,33 @@ function loadPanel(m) {
   });
   loaded[m]?.catch(() => { delete loaded[m]; toast('Couldn’t load that panel — check your connection.'); });
 }
-initTheme({ cube, store });
+const theme = initTheme({ cube, store });
+initAchievements({ store, chime });
+initLeaderboard({ backend, toast });
+
+// ---------- challenge links ----------
+async function shareChallenge(recon, btn) {
+  btn?.classList.add('busy');
+  try {
+    const url = await challengeLink(backend, recon);
+    if (navigator.share && matchMedia('(pointer: coarse)').matches) await navigator.share({ title: 'Sixfold challenge', text: `Beat my ${fmt(recon.ms)} on this exact scramble ⚔️`, url });
+    else { await navigator.clipboard.writeText(url); toast('Challenge link copied — send it to a friend ⚔️'); }
+  } catch (e) {
+    if (e?.name !== 'AbortError') toast(e.message ?? 'Couldn’t create the challenge');
+  }
+  btn?.classList.remove('busy');
+}
+async function openChallengeFromUrl(params) {
+  try {
+    const c = await challengeFromUrl(backend, params, (n, scr) => new CubeState(solvedFacelets(n)).move(scr).facelets());
+    if (!c) return;
+    setMode('time');
+    timer.startChallenge(c);
+    toast(`${c.name} solved this in ${fmt(c.ms)}. Press Space when you’re ready ⚔️`);
+  } catch (e) {
+    toast(e.message);
+  }
+}
 
 // ---------- share this cube ----------
 $('share-btn').addEventListener('click', async () => {
@@ -715,6 +756,7 @@ function keyMove(e) {
 addEventListener('keydown', e => {
   if ($('keys-dialog').open) return;
   if (e.target.matches?.('input[type=text], input:not([type]), textarea')) return;
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); commands.open(); return; }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if (e.metaKey || e.ctrlKey) return;
   if (e.key === 'h' && scheme === 'notation' && !e.altKey && !mode.startsWith('time')) { hint(); return; }
@@ -761,6 +803,33 @@ document.querySelectorAll('#scheme button').forEach(b => b.addEventListener('cli
   renderKeys();
 }));
 
+// ---------- command palette ----------
+const MODE_NAMES = { play: 'Play', learn: 'Learn', solve: 'Solve', time: 'Timer', train: 'Train', patterns: 'Patterns', scan: 'Scan', connect: 'Connect' };
+const click = id => () => $(id).click();
+const commands = initPalette(() => [
+  ...Object.entries(MODE_NAMES).map(([m, name]) => ({ title: `Go to ${name}`, group: 'Modes', run: () => setMode(m) })),
+  ...[2, 3, 4].map(n => ({ title: `Switch to the ${n}×${n}`, group: 'Puzzle', run: () => setPuzzle(n) })),
+  { title: 'Scramble', group: 'Cube', run: scramble },
+  { title: 'Reset to solved', group: 'Cube', run: () => setCube() },
+  { title: 'Undo', group: 'Cube', hint: '⌘Z', run: undo },
+  { title: 'Redo', group: 'Cube', hint: '⇧⌘Z', run: redo },
+  { title: 'Hint — show the next move', group: 'Cube', hint: 'H', run: hint },
+  { title: 'Solve this cube', group: 'Cube', run: () => { setMode('solve'); solve(); } },
+  { title: 'Teach me to solve this cube', group: 'Learn', run: () => { setMode('learn'); teach(); } },
+  { title: 'Daily challenge', group: 'Timer', run: () => { setMode('time'); if ($('daily-btn').getAttribute('aria-pressed') !== 'true') $('daily-btn').click(); } },
+  { title: 'Blindfolded timer', group: 'Timer', run: () => { setMode('time'); document.querySelector('#timer-kind [data-kind=blind]').click(); } },
+  { title: 'Stats & charts', group: 'Timer', run: () => { setMode('time'); $('stats-open').click(); } },
+  { title: 'Trophies', group: 'You', run: click('trophy-btn') },
+  { title: recorder?.recording ? 'Stop recording' : 'Record a video', group: 'Share', run: click('record-btn') },
+  { title: 'Copy a link to this cube', group: 'Share', run: click('share-btn') },
+  { title: 'Keyboard map', group: 'Help', hint: '?', run: openKeys },
+  { title: 'Take the tour', group: 'Help', run: () => { setMode('play'); startTour(); } },
+  ...['off', 'click', 'music'].map(m => ({ title: `Sound: ${{ off: 'off', click: 'clicks', music: 'musical turns' }[m]}`, group: 'Sound', run: () => document.querySelector(`#sound-modes [data-sound=${m}]`).click() })),
+  ...theme.palettes.map(([k, name]) => ({ title: `Theme: ${name}`, group: 'Look', run: () => theme.use(k) })),
+  ...allPatterns().map(([name], i) => ({ title: `Pattern: ${name}`, group: 'Patterns', run: () => { setMode('patterns'); document.querySelectorAll('.pattern')[i]?.click(); } })),
+]);
+$('palette-btn').addEventListener('click', () => commands.open());
+
 // ---------- boot ----------
 if (import.meta.env.PROD && 'serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 const shared = new URLSearchParams(location.search).get('cube');
@@ -775,17 +844,19 @@ const initial = location.hash.slice(1);
 mode = null;
 setMode(tabs.some(t => t.dataset.mode === initial) ? initial : 'play');
 render();
+const params = new URLSearchParams(location.search);
+if (params.has('race') || params.has('raceData')) openChallengeFromUrl(params);
 if (!reduceMotion) cube.assemble();
 if (import.meta.env.DEV) window.sixfold = { cube, state, get solution() { return solution; } }; // debugging handle
 // ---------- first-visit tour (loaded only when needed) ----------
 async function startTour() {
   const { initTour } = await import('./tour.js');
   // demo turns bypass history and solve tracking so the cube quietly returns to where it was
-  const demoTurn = t => { state.move(t); cube.turn(t); click(); wasSolved = state.isSolved(); };
+  const demoTurn = t => { state.move(t); cube.turn(t); audio.turn(t); wasSolved = state.isSolved(); };
   initTour({ cube, demoTurn, store }).start();
 }
 document.querySelectorAll('[data-tour]').forEach(b => b.addEventListener('click', () => { dialog.close(); setMode('play'); startTour(); }));
-if (!store.get('toured', false) && !shared && mode === 'play') setTimeout(startTour, reduceMotion ? 300 : 2200);
+if (!store.get('toured', false) && !shared && !params.has('race') && !params.has('raceData') && mode === 'play') setTimeout(startTour, reduceMotion ? 300 : 2200);
 
 performance.mark('sixfold:ready');
 setTimeout(() => (window.requestIdleCallback ?? setTimeout)(getWorker), 1500);

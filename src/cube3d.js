@@ -103,6 +103,8 @@ export class Cube3D {
     const mat = () => new THREE.MeshPhysicalMaterial({ roughness: 0.4, clearcoat: 0.7, clearcoatRoughness: 0.12 });
     this.mats = Object.fromEntries(Object.keys(COLORS).map(k => [k, mat()]));
     this.dimMats = Object.fromEntries(Object.keys(COLORS).map(k => [k, mat()]));
+    this.blindMat = new THREE.MeshPhysicalMaterial({ color: '#1d1c2b', roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.1 });
+    this.blind = false;
     this.setPalette(COLORS);
 
     this.ray = new THREE.Raycaster();
@@ -165,8 +167,14 @@ export class Cube3D {
     this.focus = fn;
     for (const g of this.cubies) {
       const lit = !fn || fn(g.userData.colors);
-      for (const m of g.children) if (m.userData.c) m.material = (lit ? this.mats : this.dimMats)[m.userData.c];
+      for (const m of g.children) if (m.userData.c) m.material = this.blind ? this.blindMat : (lit ? this.mats : this.dimMats)[m.userData.c];
     }
+  }
+
+  // Blindfold: every sticker turns to smoked glass until it's lifted.
+  setBlind(on) {
+    this.blind = on;
+    this.setFocus(this.focus);
   }
 
   // Pieces fly in from a scattered cloud and settle with a springy snap.

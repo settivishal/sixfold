@@ -133,4 +133,80 @@ console.log('all good');
   assert.equal(prob(new CubeState(S2).move('R U x').facelets()), '');
   console.log(`2x2 table + 30 solves in ${(performance.now() - t0).toFixed(0)} ms`);
 }
-console.log('all good (incl. learn + algs + voice + NxN)');
+// ---- back-end contract: shared daily scramble + server-side solve verification ----
+{
+  const { verifySolve } = await import('../src/shared/verify.js');
+  const { tokens } = await import('../src/state.js');
+  const { dailyScramble, dayNumber } = await import('../src/shared/daily.js');
+  const { readFileSync, readdirSync } = await import('node:fs');
+  assert.equal(dailyScramble(42), dailyScramble(42), 'daily scramble is deterministic');
+  assert.notEqual(dailyScramble(42), dailyScramble(43), 'daily scramble changes daily');
+  assert.equal(dayNumber(Date.UTC(2026, 0, 1, 12)), 1);
+  const scr = dailyScramble(dayNumber());
+  const timed = (seq, gap = 400) => tokens(seq).map((t, i) => [t, 500 + i * gap]);
+  const good = timed(invert(scr));
+  const ms = good.at(-1)[1] + 200;
+  const ok = verifySolve({ puzzle: 3, scramble: scr, moves: good, ms });
+  assert.ok(ok.ok && ok.turns === good.length && ok.start === new CubeState().move(scr).facelets(), 'honest solve verifies');
+  assert.equal(verifySolve({ puzzle: 3, scramble: scr, moves: good.slice(0, -1), ms }).error, 'moves do not solve the scramble');
+  assert.equal(verifySolve({ puzzle: 3, scramble: scr, moves: timed(invert(scr), 5), ms: 1000 }).error, 'faster than humanly possible'); // 25 turns in 1 s
+  assert.equal(verifySolve({ puzzle: 3, scramble: scr, moves: [...good].reverse(), ms }).ok, false, 'timestamps must not go backwards');
+  assert.equal(verifySolve({ puzzle: 3, scramble: scr, moves: [['Q', 1]], ms }).ok, false, 'rejects junk moves');
+  assert.equal(verifySolve({ puzzle: 3, scramble: '', moves: good, ms }).ok, false, 'rejects empty scramble');
+  assert.equal(verifySolve({ puzzle: 5, scramble: scr, moves: good, ms }).ok, false, 'rejects unknown puzzle');
+  const scr4 = "Rw U2 Fw' R D Uw2 L' F";
+  assert.ok(verifySolve({ puzzle: 4, scramble: scr4, moves: timed(invert(scr4)), ms: 5000 }).ok, '4x4 solve verifies');
+  // the Edge Function ships a copy of src/shared — it must never drift
+  for (const f of readdirSync('src/shared')) {
+    assert.equal(readFileSync(`supabase/functions/api/_shared/${f}`, 'utf8'), readFileSync(`src/shared/${f}`, 'utf8'), `${f} is in sync (run npm run sync:shared)`);
+  }
+}
+// ---- foundation + features: coach, streaks, palette search, music, storage migrations, challenge links ----
+{
+  const { follow, coachHint } = await import('../src/follow.js');
+  const c = { next: 'R', prev: undefined, half: null, detour: [] };
+  assert.equal(follow(c, 'R'), 'advance');
+  const d = { next: 'U2', prev: 'R', half: null, detour: [] };
+  assert.equal(follow(d, "U'"), 'half');
+  assert.equal(coachHint(d), "U'", 'ring stays on the half-done layer');
+  assert.equal(follow(d, "U'"), 'advance', 'two quarters make the half turn');
+  const e = { next: 'F', prev: 'R', half: null, detour: [] };
+  assert.equal(follow(e, "R'"), 'rewind', 'undoing the last step walks back');
+  assert.equal(follow(e, 'L'), 'detour');
+  assert.equal(coachHint(e), "L'", 'ring shows how to undo a detour');
+  assert.equal(follow(e, "L'"), 'back');
+  assert.equal(coachHint(e), 'F');
+
+  const { nextStreak } = await import('../src/features/achievements.js');
+  let st = nextStreak(undefined, 100);
+  st = nextStreak(st, 101); st = nextStreak(st, 101); st = nextStreak(st, 102);
+  assert.deepEqual(st, { last: 102, count: 3, best: 3 }, 'consecutive days build a streak');
+  assert.equal(nextStreak(st, 110).count, 1, 'a gap resets it');
+  assert.equal(nextStreak(st, 110).best, 3, 'best survives');
+
+  const { score } = await import('../src/features/palette.js');
+  assert.ok(score('tmr', 'Go to Timer') > 0 && score('xyz', 'Go to Timer') < 0);
+  assert.ok(score('solve', 'Solve this cube') > score('solve', 'Teach me to solve this cube'), 'word-start matches rank first');
+  assert.ok(score('tmr', 'Go to Timer Modes') > score('tmr', 'Teach me to solve this cube Learn'), 'letters inside one word beat letters spread across a sentence');
+  assert.ok(score('neon', 'Theme: Neon Look') > score('neon', 'Go to Connect Modes'));
+
+  const { noteFor } = await import('../src/audio.js');
+  assert.equal(noteFor('U').hz, 523.25);
+  assert.equal(noteFor("U'").hz, 523.25 * 0.75);
+  assert.ok(noteFor('R2').twice && noteFor('2R').hz === noteFor('R').hz && noteFor('Rw').hz === noteFor('R').hz);
+  assert.equal(noteFor('M'), null);
+
+  const { migrate } = await import('../src/core/storage.js');
+  const mem = new Map([['schema', 1], ['solves', [{ ms: 1 }, { ms: 2, puzzle: '222' }]]]);
+  const fake = { get: (k, d) => (mem.has(k) ? mem.get(k) : d), set: (k, v) => mem.set(k, v) };
+  migrate(fake);
+  assert.deepEqual(mem.get('solves'), [{ puzzle: '333', ms: 1 }, { ms: 2, puzzle: '222' }], 'v2 tags old solves as 3×3');
+  assert.equal(mem.get('schema'), 2);
+
+  const { pack, unpack } = await import('../src/features/challenge.js');
+  const race = { p: 3, s: "R U R' U'", m: [['U', 0], ['R', 350]], t: 1200, n: 'Ana' };
+  const packed = await pack(race);
+  assert.ok(/^[A-Za-z0-9_-]+$/.test(packed), 'URL-safe');
+  assert.deepEqual(await unpack(packed), race, 'challenge links round-trip');
+}
+console.log('all good (incl. learn + algs + voice + NxN + backend contract + features)');

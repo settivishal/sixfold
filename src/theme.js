@@ -36,4 +36,8 @@ export function initTheme({ cube, store }) {
     if (k) { body = k; store.set('body', k); apply(); }
   });
   apply();
+  return {
+    palettes: Object.entries(PALETTES).map(([k, p]) => [k, p.name]),
+    use(k) { if (PALETTES[k]) { pal = k; store.set('palette', k); apply(); } },
+  };
 }

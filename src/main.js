@@ -1,4 +1,3 @@
-import './style.css';
 import { Cube3D } from './cube3d.js';
 import { CubeState, SOLVED, FACES, COLOR_NAMES, tokens, invert, invertMove, problem, solvedFacelets, sizeOf, faceletIndex } from './state.js';
 import { STAGES, stageFocus, cfopSplits } from './learn.js';
@@ -266,10 +265,14 @@ function setMode(m) {
     window.history.replaceState(null, '', location.search + '#' + m);
     document.querySelector('.panel').scrollTop = 0;
   };
-  if (document.startViewTransition && !reduceMotion && mode && m !== mode) document.startViewTransition(go);
-  else go();
+  if (document.startViewTransition && !reduceMotion && !document.hidden && mode && m !== mode) {
+    const t = document.startViewTransition(go);
+    t.ready.catch(() => {}); // skipped transitions (tab hidden, rapid clicks) reject — the mode still switches
+  } else go();
 }
 tabs.forEach(t => t.addEventListener('click', () => setMode(t.dataset.mode)));
+// the logo goes home without a page reload
+document.querySelector('.brand').addEventListener('click', e => { e.preventDefault(); setMode('play'); });
 document.querySelectorAll('[data-goto]').forEach(b => b.addEventListener('click', () => setMode(b.dataset.goto)));
 
 // ---------- play panel ----------
